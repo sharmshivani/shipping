@@ -1,0 +1,21 @@
+# Pull-request check: tests + a compile of every image, nothing is pushed or deployed.
+substitutions:
+  _DOTNET_MAJOR: "10"
+options:
+  logging: CLOUD_LOGGING_ONLY
+steps:
+  - id: test
+    name: mcr.microsoft.com/dotnet/sdk:${_DOTNET_MAJOR}.0
+    entrypoint: bash
+    args: ['-c', 'dotnet test tests/Shipping.Tests/Shipping.Tests.csproj -p:DotNetMajor=${_DOTNET_MAJOR} --nologo -v minimal']
+  - id: images-compile
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        for svc in AuthService BookingService PaymentService StatusService; do
+          docker build -f src/$$svc/Dockerfile --build-arg DOTNET_MAJOR=${_DOTNET_MAJOR} -t pr-check/$$svc .
+        done
+        docker build -f src/Dashboard/Dockerfile -t pr-check/dashboard .

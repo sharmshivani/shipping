@@ -1,0 +1,89 @@
+# VS Code "REST Client" extension (humao.rest-client). Pick the "local" environment (bottom-right),
+# start infra + the four services, then click "Send Request" above each block, top to bottom.
+
+@host = http://localhost:8080
+
+### 1. Sign up (JSON API). The browser flow at /account/register works too.
+POST {{host}}/api/auth/signup
+Content-Type: application/json
+
+{ "email": "asha@example.com", "password": "Passw0rd!23", "name": "Asha Rao" }
+
+### 2a. USER token via the dev-only password grant (Auth:EnablePasswordGrant=true in Development).
+#      In production users sign in through the browser (authorization code + PKCE) - see the dashboard.
+# @name userToken
+POST {{host}}/connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id=dev-cli&username=asha@example.com&password=Passw0rd!23&scope=openid profile email booking payment status.read
+
+###
+@userJwt = {{userToken.response.body.$.access_token}}
+
+### 2b. Who am I? (token validated locally by auth-service)
+GET {{host}}/api/auth/me
+Authorization: Bearer {{userJwt}}
+
+### 3. Book a shipment (booking-service; scope "booking") -> writes shipment + outbox in ONE transaction
+# @name booking
+POST {{host}}/api/shipments
+Authorization: Bearer {{userJwt}}
+Content-Type: application/json
+
+{ "origin": "Delhi 110001", "destination": "Mumbai 400001", "receiverName": "Asha Rao", "weightKg": 2.5, "serviceLevel": "EXPRESS" }
+
+###
+@shipmentId = {{booking.response.body.$.id}}
+
+### 4. Status (status-service). Within ~2 s the event arrives via Pub/Sub: BOOKED
+GET {{host}}/api/status/shipments/{{shipmentId}}
+Authorization: Bearer {{userJwt}}
+
+### 5. Start a payment (payment-service; scope "payment"). Amount comes from booking-service, not from you.
+# @name payment
+POST {{host}}/api/payments
+Authorization: Bearer {{userJwt}}
+Content-Type: application/json
+
+{ "shipmentId": "{{shipmentId}}" }
+
+###
+@paymentId = {{payment.response.body.$.paymentId}}
+
+### 6. LOCAL ONLY (provider=fake): simulate the gateway reporting success (use outcome=failure to test failure)
+POST {{host}}/api/payments/{{paymentId}}/simulate?outcome=success
+Authorization: Bearer {{userJwt}}
+
+### 7. Status is now CONFIRMED
+GET {{host}}/api/status/shipments/{{shipmentId}}
+Authorization: Bearer {{userJwt}}
+
+### 8. MACHINE token (client_credentials): the carrier system. Secret = Seed:CarrierClientSecret (dev: dev-carrier-secret)
+# @name carrierToken
+POST {{host}}/connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=carrier-sim&client_secret=dev-carrier-secret&scope=status.write
+
+###
+@carrierJwt = {{carrierToken.response.body.$.access_token}}
+
+### 9. Carrier pushes delivery milestones: PICKED_UP -> IN_TRANSIT -> OUT_FOR_DELIVERY -> DELIVERED
+POST {{host}}/api/status/shipments/{{shipmentId}}/events
+Authorization: Bearer {{carrierJwt}}
+Content-Type: application/json
+
+{ "status": "PICKED_UP", "note": "Collected from sender, Delhi hub" }
+
+### 10. A USER token must NOT be able to do that (expect 403)
+POST {{host}}/api/status/shipments/{{shipmentId}}/events
+Authorization: Bearer {{userJwt}}
+Content-Type: application/json
+
+{ "status": "DELIVERED" }
+
+### OIDC discovery document and signing keys (what the APIs use to validate JWTs)
+GET {{host}}/.well-known/openid-configuration
+
+###
+GET {{host}}/.well-known/jwks

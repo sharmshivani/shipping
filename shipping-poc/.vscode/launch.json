@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "auth-service",    "type": "dotnet", "request": "launch", "projectPath": "${workspaceFolder}/src/AuthService/AuthService.csproj" },
+    { "name": "booking-service", "type": "dotnet", "request": "launch", "projectPath": "${workspaceFolder}/src/BookingService/BookingService.csproj" },
+    { "name": "payment-service", "type": "dotnet", "request": "launch", "projectPath": "${workspaceFolder}/src/PaymentService/PaymentService.csproj" },
+    { "name": "status-service",  "type": "dotnet", "request": "launch", "projectPath": "${workspaceFolder}/src/StatusService/StatusService.csproj" }
+  ],
+  "compounds": [
+    {
+      "name": "All services (F5)",
+      "configurations": ["auth-service", "booking-service", "payment-service", "status-service"],
+      "preLaunchTask": "infra: up",
+      "stopAll": true
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Shipping.Contracts</RootNamespace>
+  </PropertyGroup>
+</Project>

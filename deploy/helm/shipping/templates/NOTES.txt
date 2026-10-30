@@ -1,0 +1,8 @@
+Shipping POC deployed to namespace "{{ .Release.Namespace }}" (image tag: {{ .Values.image.tag }}).
+
+  kubectl -n {{ .Release.Namespace }} get pods
+  kubectl -n {{ .Release.Namespace }} get ingress shipping          # ADDRESS = the global static IP
+  kubectl -n {{ .Release.Namespace }} get managedcertificate        # Status must become Active (15-60 min after DNS points at the IP)
+
+Open: https://{{ .Values.host }}
+Payments provider: {{ .Values.payments.provider }}

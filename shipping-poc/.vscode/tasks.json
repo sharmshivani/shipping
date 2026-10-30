@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "infra: up",
+      "type": "shell",
+      "command": "docker compose up -d --wait postgres pubsub dashboard edge",
+      "problemMatcher": []
+    },
+    { "label": "infra: down", "type": "shell", "command": "docker compose down", "problemMatcher": [] },
+    { "label": "build", "type": "shell", "command": "dotnet build ShippingPoc.sln", "group": "build", "problemMatcher": "$msCompile" },
+    { "label": "test",  "type": "shell", "command": "dotnet test ShippingPoc.sln", "group": "test", "problemMatcher": "$msCompile" },
+    { "label": "run: auth-service",    "type": "shell", "command": "dotnet watch run --project src/AuthService",    "isBackground": true, "problemMatcher": [] },
+    { "label": "run: booking-service", "type": "shell", "command": "dotnet watch run --project src/BookingService", "isBackground": true, "problemMatcher": [] },
+    { "label": "run: payment-service", "type": "shell", "command": "dotnet watch run --project src/PaymentService", "isBackground": true, "problemMatcher": [] },
+    { "label": "run: status-service",  "type": "shell", "command": "dotnet watch run --project src/StatusService",  "isBackground": true, "problemMatcher": [] },
+    {
+      "label": "run: all services (no debugger)",
+      "dependsOn": ["run: auth-service", "run: booking-service", "run: payment-service", "run: status-service"],
+      "problemMatcher": []
+    }
+  ]
+}

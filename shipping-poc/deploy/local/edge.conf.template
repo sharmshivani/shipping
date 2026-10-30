@@ -1,0 +1,30 @@
+# Local stand-in for the Global External Application Load Balancer.
+# Same path map as the Helm Ingress, so URLs and the OIDC issuer behave exactly like production.
+# ${..._UPSTREAM} values come from docker-compose (host.docker.internal:500x when you F5 in VS Code,
+# or the container names in "full" mode).
+server {
+    listen 80;
+    client_max_body_size 1m;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $http_host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $http_host;
+
+    # auth-service
+    location /connect       { proxy_pass http://${AUTH_UPSTREAM}; }
+    location /.well-known   { proxy_pass http://${AUTH_UPSTREAM}; }
+    location /account       { proxy_pass http://${AUTH_UPSTREAM}; }
+    location /api/auth      { proxy_pass http://${AUTH_UPSTREAM}; }
+
+    # booking / payment / status
+    location /api/shipments { proxy_pass http://${BOOKING_UPSTREAM}; }
+    location /api/payments  { proxy_pass http://${PAYMENT_UPSTREAM}; }
+    location /webhooks      { proxy_pass http://${PAYMENT_UPSTREAM}; }
+    location /api/status    { proxy_pass http://${STATUS_UPSTREAM}; }
+
+    # dashboard (static)
+    location /              { proxy_pass http://dashboard:8080; }
+}

@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "BookingService": {
+      "commandName": "Project",
+      "applicationUrl": "http://localhost:5002",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "PUBSUB_EMULATOR_HOST": "localhost:8085"
+      }
+    }
+  }
+}

@@ -1,0 +1,177 @@
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "shipping.labels" (dict "root" $ "name" $name) | nindent 4 }}
+  {{- if $svc.gsa }}
+  annotations:
+    # Workload Identity: this Kubernetes SA may act as the Google SA (binding created in setup.sh)
+    iam.gke.io/gcp-service-account: {{ $svc.gsa }}@{{ required "gcp.projectId is required" $.Values.gcp.projectId }}.iam.gserviceaccount.com
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "shipping.labels" (dict "root" $ "name" $name) | nindent 4 }}
+spec:
+  replicas: {{ $svc.replicas | default 1 }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0          # never drop below desired capacity during a rollout
+  selector:
+    matchLabels:
+      {{- include "shipping.selector" (dict "name" $name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "shipping.labels" (dict "root" $ "name" $name) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "shipping.selector" (dict "name" $name) | nindent 14 }}
+      containers:
+        - name: app
+          image: "{{ required "image.registry is required" $.Values.image.registry }}/{{ $svc.image }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          {{- $env := dict }}
+          {{- if $svc.dotnet }}
+          {{- $env = deepCopy $.Values.common.env }}
+          {{- end }}
+          {{- $env = mergeOverwrite $env (deepCopy ($svc.env | default dict)) }}
+          {{- if $env }}
+          env:
+            {{- range $k, $v := $env }}
+            - name: {{ $k }}
+              value: {{ tpl (toString $v) $ | quote }}
+            {{- end }}
+          {{- end }}
+          # startupProbe gives the app time to wait for Cloud SQL + create tables before liveness starts.
+          startupProbe:
+            httpGet:
+              path: {{ $svc.livenessPath | default "/healthz/live" }}
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:               # includes SELECT 1 for .NET services: only traffic-ready if the DB answers
+            httpGet:
+              path: {{ $svc.readinessPath | default "/healthz/ready" }}
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:                # never touches the DB, so a DB blip doesn't restart pods
+            httpGet:
+              path: {{ $svc.livenessPath | default "/healthz/live" }}
+              port: http
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            {{- toYaml ($svc.resources | default $.Values.defaultResources) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ if $svc.dotnet }}true{{ else }}false{{ end }}
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+        {{- if $svc.needsDb }}
+        # Cloud SQL Auth Proxy: encrypted, IAM-authorised tunnel to Cloud SQL on localhost:5432
+        - name: cloud-sql-proxy
+          image: {{ $.Values.cloudSql.proxyImage }}
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            {{- if $.Values.cloudSql.privateIp }}
+            - "--private-ip"
+            {{- end }}
+            - {{ required "cloudSql.connectionName is required (PROJECT:REGION:INSTANCE)" $.Values.cloudSql.connectionName | quote }}
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- if gt (int ($svc.replicas | default 1)) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "shipping.selector" (dict "name" $name) | nindent 6 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "shipping.labels" (dict "root" $ "name" $name) | nindent 4 }}
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'     # container-native load balancing (LB talks straight to pods)
+    {{- if $svc.paths }}
+    cloud.google.com/backend-config: '{"default": "{{ $name }}"}'
+    {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "shipping.selector" (dict "name" $name) | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if $svc.paths }}
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+spec:
+  timeoutSec: 60
+  connectionDraining:
+    drainingTimeoutSec: 30
+  healthCheck:
+    type: HTTP
+    requestPath: {{ $svc.livenessPath | default "/healthz/live" }}
+    port: 8080
+    checkIntervalSec: 15
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,44 @@
+# Override: run all four .NET services as containers too.
+x-service-env: &service-env
+  ASPNETCORE_ENVIRONMENT: Development      # enables dev defaults (ephemeral signing keys, dev password grant)
+  Db__Host: postgres
+  Db__Password: app_dev_password
+  Auth__Authority: http://localhost:8080   # must equal the issuer in tokens
+  Auth__InternalBaseUrl: http://auth-service:8080
+  PubSub__ProjectId: local-dev
+  PUBSUB_EMULATOR_HOST: pubsub:8085
+
+services:
+  edge:
+    environment:
+      AUTH_UPSTREAM: auth-service:8080
+      BOOKING_UPSTREAM: booking-service:8080
+      PAYMENT_UPSTREAM: payment-service:8080
+      STATUS_UPSTREAM: status-service:8080
+    depends_on: [dashboard, auth-service, booking-service, payment-service, status-service]
+
+  auth-service:
+    build: { context: ., dockerfile: src/AuthService/Dockerfile }
+    environment:
+      <<: *service-env
+      Auth__Issuer: http://localhost:8080
+      Seed__DashboardOrigins: http://localhost:8080
+    depends_on: { postgres: { condition: service_healthy } }
+
+  booking-service:
+    build: { context: ., dockerfile: src/BookingService/Dockerfile }
+    environment: *service-env
+    depends_on: { postgres: { condition: service_healthy }, pubsub: { condition: service_started } }
+
+  payment-service:
+    build: { context: ., dockerfile: src/PaymentService/Dockerfile }
+    environment:
+      <<: *service-env
+      Services__Booking: http://booking-service:8080
+      Payments__Provider: fake
+    depends_on: { postgres: { condition: service_healthy }, pubsub: { condition: service_started } }
+
+  status-service:
+    build: { context: ., dockerfile: src/StatusService/Dockerfile }
+    environment: *service-env
+    depends_on: { postgres: { condition: service_healthy }, pubsub: { condition: service_started } }

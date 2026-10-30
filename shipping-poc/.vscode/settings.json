@@ -1,0 +1,9 @@
+{
+  "dotnet.defaultSolution": "ShippingPoc.sln",
+  "files.exclude": { "**/bin": true, "**/obj": true },
+  "rest-client.environmentVariables": {
+    "$shared": {},
+    "local": { "host": "http://localhost:8080" },
+    "gke":   { "host": "https://shipping.example.com" }
+  }
+}

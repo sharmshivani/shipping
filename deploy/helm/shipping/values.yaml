@@ -1,0 +1,105 @@
+# Public DNS name that points at the global static IP (see deploy/infra/setup.sh). Also the OIDC issuer.
+host: shipping.example.com
+
+gcp:
+  projectId: ""                      # set by Cloud Build (--set gcp.projectId=$PROJECT_ID)
+
+image:
+  registry: ""                       # e.g. asia-south2-docker.pkg.dev/PROJECT/shipping
+  tag: latest                        # Cloud Build sets this to the git SHORT_SHA
+  pullPolicy: IfNotPresent
+
+cloudSql:
+  connectionName: ""                 # PROJECT:REGION:INSTANCE
+  proxyImage: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+  privateIp: false                   # true if the instance has a private IP only
+
+pubsub:
+  topic: transaction-events
+  subscription: status-service-sub
+
+payments:
+  provider: fake                     # "fake" (demo) or "razorpay" (needs the razorpay-* secrets)
+
+ingress:
+  staticIpName: shipping-ip
+  managedCertificate: shipping-cert
+
+defaultResources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 512Mi }
+
+# Env applied to every .NET service. Values go through `tpl`, so {{ .Values.* }} works.
+# Double underscore = nested config key (Db__Host -> Db:Host).
+common:
+  env:
+    ASPNETCORE_ENVIRONMENT: Production
+    Gcp__ProjectId: "{{ .Values.gcp.projectId }}"
+    Auth__Authority: "https://{{ .Values.host }}"
+    Auth__InternalBaseUrl: "http://auth-service"      # in-cluster Service: JWKS fetches never leave the cluster
+    Db__Host: "127.0.0.1"                              # Cloud SQL Auth Proxy sidecar
+    Db__Port: "5432"
+    Db__Name: shipping
+    Db__User: app
+    PubSub__ProjectId: "{{ .Values.gcp.projectId }}"
+    PubSub__Topic: "{{ .Values.pubsub.topic }}"
+    PubSub__Subscription: "{{ .Values.pubsub.subscription }}"
+
+# One entry = one microservice. The templates loop over this map.
+#   gsa    : Google service account this pod acts as (Workload Identity) - created by setup.sh
+#   paths  : URL prefixes routed to it by the load balancer
+services:
+  auth-service:
+    enabled: true
+    dotnet: true
+    needsDb: true
+    image: auth-service
+    gsa: shipping-auth
+    replicas: 2
+    paths: ["/connect", "/.well-known", "/account", "/api/auth"]
+    env:
+      Auth__Issuer: "https://{{ .Values.host }}"
+      Seed__DashboardOrigins: "https://{{ .Values.host }}"
+
+  booking-service:
+    enabled: true
+    dotnet: true
+    needsDb: true
+    image: booking-service
+    gsa: shipping-booking
+    replicas: 2
+    paths: ["/api/shipments"]
+
+  payment-service:
+    enabled: true
+    dotnet: true
+    needsDb: true
+    image: payment-service
+    gsa: shipping-payment
+    replicas: 2
+    paths: ["/api/payments", "/webhooks"]
+    env:
+      Payments__Provider: "{{ .Values.payments.provider }}"
+      Services__Booking: "http://booking-service"
+
+  status-service:
+    enabled: true
+    dotnet: true
+    needsDb: true
+    image: status-service
+    gsa: shipping-status
+    replicas: 1
+    paths: ["/api/status"]
+
+  dashboard:
+    enabled: true
+    dotnet: false
+    needsDb: false
+    image: dashboard
+    replicas: 1
+    paths: ["/"]
+    readinessPath: /healthz
+    livenessPath: /healthz
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 128Mi }

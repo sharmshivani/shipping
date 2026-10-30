@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shipping dashboard</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--ink:#1d2433;--mute:#667085;--line:#e4e7ec;--brand:#1a56db;--ok:#067647;--warn:#b54708;--bad:#b42318}
+  *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+  header{display:flex;justify-content:space-between;align-items:center;padding:.9rem 1.5rem;background:#fff;border-bottom:1px solid var(--line)}
+  header h1{font-size:1.05rem;margin:0} main{max-width:980px;margin:1.5rem auto;padding:0 1rem;display:grid;gap:1rem}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.25rem}
+  .card h2{margin:0 0 .75rem;font-size:1rem}
+  form{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.75rem;align-items:end}
+  label{font-size:.8rem;color:var(--mute);display:grid;gap:.2rem}
+  input,select{padding:.55rem;border:1px solid #ccd2dd;border-radius:8px;font:inherit}
+  button{padding:.55rem .9rem;border:0;border-radius:8px;background:var(--brand);color:#fff;font:inherit;cursor:pointer}
+  button.ghost{background:#eef2ff;color:var(--brand)} button.bad{background:#fee4e2;color:var(--bad)} button:disabled{opacity:.5}
+  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:.55rem .4rem;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:.75rem;text-transform:uppercase;color:var(--mute);letter-spacing:.04em}
+  .badge{display:inline-block;padding:.1rem .55rem;border-radius:99px;font-size:.78rem;background:#eef2ff;color:var(--brand)}
+  .badge.CONFIRMED,.badge.DELIVERED{background:#d1fadf;color:var(--ok)} .badge.BOOKED{background:#fef0c7;color:var(--warn)}
+  .badge.PAYMENT_FAILED{background:#fee4e2;color:var(--bad)}
+  .muted{color:var(--mute);font-size:.85rem} .hidden{display:none} pre{white-space:pre-wrap;word-break:break-all;font-size:.75rem;background:#f9fafb;padding:.6rem;border-radius:8px}
+  #toast{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);background:#101828;color:#fff;padding:.6rem 1rem;border-radius:8px;display:none}
+  .row{display:flex;gap:.5rem;flex-wrap:wrap} ul.tl{margin:.3rem 0 0;padding-left:1.1rem;font-size:.82rem;color:var(--mute)}
+</style>
+</head>
+<body>
+<header>
+  <h1>📦 Shipping dashboard</h1>
+  <div class="row"><span id="who" class="muted"></span>
+    <button id="btnLogin">Sign in</button><button id="btnLogout" class="ghost hidden">Sign out</button></div>
+</header>
+<main id="app" class="hidden">
+  <section class="card">
+    <h2>Book a shipment</h2>
+    <form id="bookForm">
+      <label>From<input name="origin" value="Delhi 110001" required></label>
+      <label>To<input name="destination" value="Mumbai 400001" required></label>
+      <label>Receiver<input name="receiverName" value="Asha Rao" required></label>
+      <label>Weight (kg)<input name="weightKg" type="number" step="0.1" min="0.1" max="70" value="2" required></label>
+      <label>Service<select name="serviceLevel"><option>STANDARD</option><option>EXPRESS</option></select></label>
+      <button>Book shipment</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>My shipments <span class="muted">(status refreshes every 4 s)</span></h2>
+    <table><thead><tr><th>Tracking</th><th>Route</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody id="rows"></tbody></table>
+    <p id="empty" class="muted hidden">No shipments yet.</p>
+  </section>
+  <section class="card">
+    <h2>Debug: access token</h2>
+    <p class="muted">A JWT signed by auth-service. Paste it into jwt.io, or use it in <code>requests.http</code>.</p>
+    <pre id="token"></pre>
+  </section>
+</main>
+<section id="hello" class="card" style="max-width:520px;margin:3rem auto"><h2>Welcome</h2>
+  <p class="muted">Sign in (OpenID Connect, authorization code + PKCE) to book and track shipments.</p></section>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const CLIENT_ID = 'dashboard';
+const SCOPE = 'openid profile email offline_access booking payment status.read';
+const REDIRECT = location.origin + '/';
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = (minor, cur) => new Intl.NumberFormat('en-IN', {style:'currency', currency: cur || 'INR'}).format(minor / 100);
+const toast = m => { const t = $('toast'); t.textContent = m; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 3500); };
+
+// ---------- OIDC: authorization code + PKCE (public client, no secret) ----------
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const rand = n => b64url(crypto.getRandomValues(new Uint8Array(n)));
+
+async function login() {
+  const verifier = rand(32), state = rand(16);
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  sessionStorage.setItem('pkce', JSON.stringify({verifier, state}));
+  const p = new URLSearchParams({client_id: CLIENT_ID, redirect_uri: REDIRECT, response_type: 'code', scope: SCOPE,
+    code_challenge: challenge, code_challenge_method: 'S256', state});
+  location.href = '/connect/authorize?' + p;
+}
+
+async function tokenRequest(params) {
+  const res = await fetch('/connect/token', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: new URLSearchParams({client_id: CLIENT_ID, ...params})});
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error_description || body.error || 'token request failed');
+  body.expires_at = Date.now() + (body.expires_in - 30) * 1000;
+  sessionStorage.setItem('tokens', JSON.stringify(body));
+  return body;
+}
+
+async function handleCallback() {
+  const q = new URLSearchParams(location.search);
+  if (!q.has('code') && !q.has('error')) return;
+  history.replaceState({}, '', REDIRECT);
+  if (q.has('error')) return toast('Login failed: ' + (q.get('error_description') || q.get('error')));
+  const saved = JSON.parse(sessionStorage.getItem('pkce') || 'null');
+  sessionStorage.removeItem('pkce');
+  if (!saved || saved.state !== q.get('state')) return toast('Login failed: state mismatch');
+  await tokenRequest({grant_type: 'authorization_code', code: q.get('code'), redirect_uri: REDIRECT, code_verifier: saved.verifier});
+}
+
+async function accessToken() {
+  let t = JSON.parse(sessionStorage.getItem('tokens') || 'null');
+  if (!t) return null;
+  if (Date.now() > t.expires_at) {
+    if (!t.refresh_token) return null;
+    try { t = await tokenRequest({grant_type: 'refresh_token', refresh_token: t.refresh_token}); } catch { return null; }
+  }
+  return t.access_token;
+}
+
+function logout() {
+  const t = JSON.parse(sessionStorage.getItem('tokens') || 'null');
+  sessionStorage.removeItem('tokens');
+  const p = new URLSearchParams({post_logout_redirect_uri: REDIRECT, client_id: CLIENT_ID});
+  if (t?.id_token) p.set('id_token_hint', t.id_token);
+  location.href = '/connect/logout?' + p;
+}
+
+async function api(path, opts = {}) {
+  const token = await accessToken();
+  if (!token) { showSignedOut(); throw new Error('Session expired, please sign in again.'); }
+  const res = await fetch(path, {...opts, headers: {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts.headers || {})}});
+  if (res.status === 401) { sessionStorage.removeItem('tokens'); showSignedOut(); throw new Error('Unauthorized'); }
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new Error(data?.error || data?.title || (data?.errors && Object.values(data.errors).flat().join(' ')) || ('HTTP ' + res.status));
+  return data;
+}
+
+// ---------- UI ----------
+function showSignedOut() { $('app').classList.add('hidden'); $('hello').classList.remove('hidden');
+  $('btnLogin').classList.remove('hidden'); $('btnLogout').classList.add('hidden'); $('who').textContent = ''; }
+
+async function showSignedIn() {
+  $('app').classList.remove('hidden'); $('hello').classList.add('hidden');
+  $('btnLogin').classList.add('hidden'); $('btnLogout').classList.remove('hidden');
+  const token = await accessToken();
+  $('token').textContent = token;
+  try { const me = await fetch('/connect/userinfo', {headers: {Authorization: 'Bearer ' + token}}).then(r => r.json()); $('who').textContent = me.email || me.name || ''; } catch {}
+  await refresh();
+}
+
+let statusCache = {};
+async function refresh() {
+  try {
+    const [shipments, statuses] = await Promise.all([api('/api/shipments'), api('/api/status/shipments')]);
+    statusCache = Object.fromEntries(statuses.map(s => [s.shipmentId, s]));
+    $('empty').classList.toggle('hidden', shipments.length > 0);
+    $('rows').innerHTML = shipments.map(s => {
+      const st = statusCache[s.id]?.status || 'PENDING';
+      const payable = st === 'BOOKED' || st === 'PAYMENT_FAILED' || st === 'PENDING';
+      return `<tr>
+        <td><b>${esc(s.trackingNumber)}</b><br><span class="muted">${esc(s.serviceLevel)} · ${esc(s.weightKg)} kg</span></td>
+        <td>${esc(s.origin)} → ${esc(s.destination)}<br><span class="muted">${esc(s.receiverName)}</span></td>
+        <td>${money(s.amountMinor, s.currency)}</td>
+        <td><span class="badge ${esc(st)}">${esc(st.replace(/_/g,' '))}</span><div id="tl-${esc(s.id)}"></div></td>
+        <td class="row">${payable ? `<button data-pay="${esc(s.id)}">Pay</button>` : ''}
+            <button class="ghost" data-history="${esc(s.id)}">Timeline</button></td></tr>`;
+    }).join('');
+  } catch (e) { if (e.message !== 'Unauthorized') toast(e.message); }
+}
+
+$('bookForm').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const f = Object.fromEntries(new FormData(ev.target));
+  f.weightKg = Number(f.weightKg);
+  try { await api('/api/shipments', {method: 'POST', body: JSON.stringify(f)}); toast('Shipment booked'); setTimeout(refresh, 800); }
+  catch (e) { toast(e.message); }
+});
+
+$('rows').addEventListener('click', async ev => {
+  const pay = ev.target.dataset.pay, hist = ev.target.dataset.history;
+  if (pay) startPayment(pay);
+  if (hist) {
+    try {
+      const d = await api('/api/status/shipments/' + hist);
+      $('tl-' + hist).innerHTML = '<ul class="tl">' + d.history.map(h =>
+        `<li>${new Date(h.occurredAt).toLocaleTimeString()} · <b>${esc(h.status)}</b> ${esc(h.detail || '')} <i>(${esc(h.source)})</i></li>`).join('') + '</ul>';
+    } catch (e) { toast(e.message); }
+  }
+});
+
+// ---------- Payment ----------
+async function startPayment(shipmentId) {
+  let p;
+  try { p = await api('/api/payments', {method: 'POST', body: JSON.stringify({shipmentId})}); } catch (e) { return toast(e.message); }
+
+  if (p.provider === 'razorpay') {
+    await loadScript('https://checkout.razorpay.com/v1/checkout.js');
+    const rzp = new Razorpay({
+      key: p.keyId, amount: p.amountMinor, currency: p.currency, order_id: p.orderId,
+      name: 'Shipping POC', description: 'Shipment ' + p.shipmentTracking,
+      handler: async r => {   // fast-path confirmation; the webhook is the source of truth
+        try { await api(`/api/payments/${p.paymentId}/confirm`, {method: 'POST',
+          body: JSON.stringify({gatewayPaymentId: r.razorpay_payment_id, signature: r.razorpay_signature})}); toast('Payment received'); }
+        catch (e) { toast(e.message); }
+        refresh();
+      },
+      modal: {ondismiss: () => toast('Checkout closed')},
+    });
+    rzp.on('payment.failed', r => toast('Payment failed: ' + (r.error?.description || 'unknown')));
+    rzp.open();
+  } else {   // "fake" provider (local): simulate the gateway
+    const ok = confirm(`Fake gateway: pay ${money(p.amountMinor, p.currency)}?\nOK = success, Cancel = failure`);
+    try { await api(`/api/payments/${p.paymentId}/simulate?outcome=${ok ? 'success' : 'failure'}`, {method: 'POST'}); } catch (e) { toast(e.message); }
+    setTimeout(refresh, 1200);
+  }
+}
+const loadScript = src => new Promise((res, rej) => { if (document.querySelector(`script[src="${src}"]`)) return res();
+  const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+
+$('btnLogin').onclick = login;
+$('btnLogout').onclick = logout;
+
+(async () => {
+  try { await handleCallback(); } catch (e) { toast(e.message); }
+  if (await accessToken()) { await showSignedIn(); setInterval(refresh, 4000); } else showSignedOut();
+})();
+</script>
+</body>
+</html>

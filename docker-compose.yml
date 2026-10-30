@@ -1,0 +1,48 @@
+# Local infrastructure + edge proxy. Run the .NET services from VS Code (F5) against this.
+#   docker compose up -d
+#   open http://localhost:8080
+# To run EVERYTHING in containers instead:
+#   docker compose -f docker-compose.yml -f docker-compose.full.yml up --build
+name: shipping-poc
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shipping
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_dev_password
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d shipping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --project=local-dev --host-port=0.0.0.0:8085
+    ports: ["8085:8085"]
+
+  dashboard:
+    image: nginxinc/nginx-unprivileged:stable-alpine
+    volumes:
+      - ./src/Dashboard/wwwroot:/usr/share/nginx/html:ro
+      - ./src/Dashboard/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  edge:
+    image: nginx:stable-alpine
+    ports: ["8080:80"]
+    depends_on: [dashboard]
+    extra_hosts: ["host.docker.internal:host-gateway"]   # lets the container reach services running on your host
+    environment:
+      AUTH_UPSTREAM: host.docker.internal:5001
+      BOOKING_UPSTREAM: host.docker.internal:5002
+      PAYMENT_UPSTREAM: host.docker.internal:5003
+      STATUS_UPSTREAM: host.docker.internal:5004
+    volumes:
+      - ./deploy/local/edge.conf.template:/etc/nginx/templates/default.conf.template:ro
+
+volumes:
+  pgdata:

@@ -1,0 +1,47 @@
+# Global External Application Load Balancer (the diagram's "Load balancer"), created by GKE from this Ingress.
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: {{ .Values.ingress.managedCertificate }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  domains:
+    - {{ required "host is required" .Values.host }}
+---
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: shipping-frontend
+  namespace: {{ .Release.Namespace }}
+spec:
+  redirectToHttps:
+    enabled: true
+    responseCodeName: MOVED_PERMANENTLY_DEFAULT
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shipping
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: {{ .Values.ingress.staticIpName | quote }}
+    networking.gke.io/managed-certificates: {{ .Values.ingress.managedCertificate | quote }}
+    networking.gke.io/v1beta1.FrontendConfig: shipping-frontend
+spec:
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          {{- range $name, $svc := .Values.services }}
+          {{- if $svc.enabled }}
+          {{- range $svc.paths }}
+          - path: {{ . | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  number: 80
+          {{- end }}
+          {{- end }}
+          {{- end }}

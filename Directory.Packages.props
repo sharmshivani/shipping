@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
+    <!-- Microsoft/EF/Npgsql packages follow the runtime major: 10.0.* or 8.0.* -->
+    <MsVer>$(DotNetMajor).0.*</MsVer>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="$(MsVer)" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="$(MsVer)" />
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="$(MsVer)" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(MsVer)" />
+    <PackageVersion Include="OpenIddict.AspNetCore" Version="7.*" />
+    <PackageVersion Include="OpenIddict.EntityFrameworkCore" Version="7.*" />
+    <PackageVersion Include="Google.Cloud.PubSub.V1" Version="3.*" />
+    <PackageVersion Include="Google.Cloud.SecretManager.V1" Version="2.*" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+    <PackageVersion Include="xunit" Version="2.*" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.*" />
+  </ItemGroup>
+</Project>

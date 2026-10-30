@@ -1,0 +1,75 @@
+# GitHub push to main -> Cloud Build trigger -> this file.
+#   1. unit tests          2. build + push 5 images in parallel (Artifact Registry)
+#   3. helm upgrade --install on GKE (rolls back automatically if the rollout fails)
+#
+# Required trigger substitutions:  _HOST  _SQL_CONNECTION   (everything else has a default)
+substitutions:
+  _REGION: asia-south2              # Artifact Registry + GKE region (Delhi, as in the diagram)
+  _REPO: shipping                   # Artifact Registry repository
+  _CLUSTER: shipping-poc
+  _NAMESPACE: shipping
+  _HOST: shipping.example.com       # public DNS name -> static IP; also the OIDC issuer
+  _SQL_CONNECTION: ""               # PROJECT:REGION:INSTANCE (printed by setup.sh)
+  _PAYMENTS_PROVIDER: fake          # fake | razorpay
+  _DOTNET_MAJOR: "10"               # 10 or 8
+
+options:
+  logging: CLOUD_LOGGING_ONLY       # required when the build runs as a user-specified service account
+
+steps:
+  - id: test
+    name: mcr.microsoft.com/dotnet/sdk:${_DOTNET_MAJOR}.0
+    entrypoint: bash
+    args: ['-c', 'dotnet test tests/Shipping.Tests/Shipping.Tests.csproj -p:DotNetMajor=${_DOTNET_MAJOR} --nologo -v minimal']
+    waitFor: ['-']
+
+  - id: build-auth-service
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker build -f src/AuthService/Dockerfile --build-arg DOTNET_MAJOR=${_DOTNET_MAJOR} -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/auth-service:${SHORT_SHA} . && docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/auth-service:${SHORT_SHA}']
+    waitFor: ['-']
+
+  - id: build-booking-service
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker build -f src/BookingService/Dockerfile --build-arg DOTNET_MAJOR=${_DOTNET_MAJOR} -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/booking-service:${SHORT_SHA} . && docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/booking-service:${SHORT_SHA}']
+    waitFor: ['-']
+
+  - id: build-payment-service
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker build -f src/PaymentService/Dockerfile --build-arg DOTNET_MAJOR=${_DOTNET_MAJOR} -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/payment-service:${SHORT_SHA} . && docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/payment-service:${SHORT_SHA}']
+    waitFor: ['-']
+
+  - id: build-status-service
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker build -f src/StatusService/Dockerfile --build-arg DOTNET_MAJOR=${_DOTNET_MAJOR} -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/status-service:${SHORT_SHA} . && docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/status-service:${SHORT_SHA}']
+    waitFor: ['-']
+
+  - id: build-dashboard
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args: ['-c', 'docker build -f src/Dashboard/Dockerfile -t ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/dashboard:${SHORT_SHA} . && docker push ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/dashboard:${SHORT_SHA}']
+    waitFor: ['-']
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:latest     # has gcloud, kubectl and gke-gcloud-auth-plugin
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        curl -fsSL https://get.helm.sh/helm-v3.16.4-linux-amd64.tar.gz | tar -xz --strip-components=1 -C /usr/local/bin linux-amd64/helm
+        gcloud container clusters get-credentials ${_CLUSTER} --region ${_REGION} --project ${PROJECT_ID}
+        helm upgrade --install shipping deploy/helm/shipping \
+          --namespace ${_NAMESPACE} --create-namespace \
+          --set gcp.projectId=${PROJECT_ID} \
+          --set image.registry=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO} \
+          --set image.tag=${SHORT_SHA} \
+          --set host=${_HOST} \
+          --set cloudSql.connectionName=${_SQL_CONNECTION} \
+          --set payments.provider=${_PAYMENTS_PROVIDER} \
+          --atomic --timeout 10m
+        kubectl -n ${_NAMESPACE} get pods,ingress
+    waitFor: ['test', 'build-auth-service', 'build-booking-service', 'build-payment-service', 'build-status-service', 'build-dashboard']

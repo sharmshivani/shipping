@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "StatusService": {
+      "commandName": "Project",
+      "applicationUrl": "http://localhost:5004",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "PUBSUB_EMULATOR_HOST": "localhost:8085"
+      }
+    }
+  }
+}
