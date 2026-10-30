@@ -1,15 +1,19 @@
 <Project>
+
   <PropertyGroup>
-    <!--
-      ONE KNOB for the .NET version: 10 (default, LTS) or 8 (LTS, support ends Nov 2026).
-      Local:   dotnet build -p:DotNetMajor=8
-      Docker:  docker build --build-arg DOTNET_MAJOR=8 ...
-    -->
+
     <DotNetMajor Condition="'$(DotNetMajor)' == ''">10</DotNetMajor>
+
     <TargetFramework>net$(DotNetMajor).0</TargetFramework>
+
     <Nullable>enable</Nullable>
+
     <ImplicitUsings>enable</ImplicitUsings>
+
     <InvariantGlobalization>true</InvariantGlobalization>
+
     <NuGetAudit>true</NuGetAudit>
+
   </PropertyGroup>
+
 </Project>
