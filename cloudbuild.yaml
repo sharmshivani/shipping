@@ -70,6 +70,6 @@ steps:
           --set host=${_HOST} \
           --set cloudSql.connectionName=${_SQL_CONNECTION} \
           --set payments.provider=${_PAYMENTS_PROVIDER} \
-          --atomic --timeout 10m
+          --wait --timeout 10m
         kubectl -n ${_NAMESPACE} get pods,ingress
     waitFor: ['test', 'build-auth-service', 'build-booking-service', 'build-payment-service', 'build-status-service', 'build-dashboard']
