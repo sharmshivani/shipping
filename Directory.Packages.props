@@ -3,7 +3,8 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageFloatingVersionsEnabled>true</CentralPackageFloatingVersionsEnabled>
     <!-- Microsoft/EF/Npgsql packages follow the runtime major: 10.0.* or 8.0.* -->
-    <MsVer>$(DotNetMajor).0.*</MsVer>
+    <DotNetMajor Condition="'$(DotNetMajor)' == ''">10</DotNetMajor>
+<MsVer>$(DotNetMajor).0.*</MsVer>
   </PropertyGroup>
   <ItemGroup>
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="$(MsVer)" />
